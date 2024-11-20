@@ -123,6 +123,17 @@ end
 ## ------------- Time Evolution ------------- ##
 
 function update_sigmas_p2!(force, sigmas, J, mu, beta, dt, N::Int, R::Int)
+    #= Comments:  
+    size of J = N x N x R 
+    size of sigmas = N x R 
+    size of force = 1 x N x R 
+
+    The `reshape(sigmas, 1, N, R)` is used to broadcast the spins over the first dimension of the coupling matrix J, 
+    without using a for i loop, prohibited or more complex for GPUs.
+    In the end, it implements, for all i = 1:N, for all r in 1:R, 
+            force_ir = sum_j J_ijr * sigma_jr
+    =#
+
     force = sum(J .* reshape(sigmas, 1, N, R), dims=(2))[:, 1, :]    
     thermal_noise = sqrt(2dt / beta) * CUDA.randn(Float32, N, R) # different noise for each spin, also different for each realisation
     sigmas += -dt * mu * sigmas + dt * force + thermal_noise
@@ -132,8 +143,19 @@ end
 
 
 function update_sigmas_p3!(force, sigmas, J, mu, beta, dt, N::Int, R::Int)
-    sigmul = reshape(sigmas, 1, N, R) .* reshape(sigmas, N, 1, R)
-    sigmul = reshape(sigmul, 1, N, N, R) # size = 1 x N x N x R /// σ_mul_ijr = σ_ir * σ_jr
+    #= Comments:  
+    size of J = N x N x N x R 
+    size of sigmas = N x N x R 
+    size of force = 1 x N x R 
+
+    The `reshape(sigmas, 1, N, R)` is used to broadcast the spins over the first dimension of the coupling matrix J, 
+    without using for loops over i and r (prohibited or more complex for GPUs).
+    In the end, it implements, for all i = 1:N, for all r in 1:R, 
+        force_ir = sum_{j,k} J_ijkr * sigma_jr * sigma_kr
+    
+    =#
+    sigmul = reshape(sigmas, 1, N, R) .* reshape(sigmas, N, 1, R) # 3d array of size N x N x R /// σ_mul_ijr = σ_ir * σ_jr
+    sigmul = reshape(sigmul, 1, N, N, R) # size = 1 x N x N x R to fit the size of J, to be able to multiply element-wise
     
     force = sum(J .* sigmul, dims=(2, 3))[:, 1, 1, :]
     
@@ -144,6 +166,7 @@ function update_sigmas_p3!(force, sigmas, J, mu, beta, dt, N::Int, R::Int)
 
     return sigmas  
 end 
+
 
 
 function evolve_sigmas!(force, sigmas, J, mu, beta, p, t, dt, tmax, N::Int, R::Int)
